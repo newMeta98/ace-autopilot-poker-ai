@@ -1,0 +1,14 @@
+# Core dependencies
+opencv-python         # Computer vision processing
+pytesseract           # OCR text extraction
+pyautogui             # Mouse/keyboard automation
+keyboard              # Hotkey detection
+mss                   # Fast screen capturing
+pillow                # Image processing
+numpy                 # Numerical operations
+python-dotenv         # Environment management
+openai                # DeepSeek API client
+        
+# For Moondream model
+moondream
+git+https://github.com/vikhyat/moondream.git  # Vision model
