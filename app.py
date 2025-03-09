@@ -158,9 +158,9 @@ class OverlayWindow:
         
         # Calculate window dimensions (98% height, right-aligned)
         window_width = 300
-        window_height = int(screen_height * 0.98)
+        window_height = int(screen_height * 0.73)
         x_position = screen_width - window_width - 17  # 17px from right edge
-        y_position = 35  # 35px from top
+        y_position = 215  # 35px from top
         
         self.root.geometry(f"{window_width}x{window_height}+{x_position}+{y_position}")
         self.root.attributes("-topmost", True)
@@ -418,6 +418,7 @@ def handle_phase(phase):
         overlay.update_log(f"🤖 AI Recommendation: {ai_decision['final_decision'].upper()}")
         overlay.update_log(f"💡 Reasoning: {ai_decision['thinking_process']}")
         perform_ai_action(ai_decision)
+        return ai_decision
 
 def infer_missing_actions():
     global formatted_data
@@ -612,6 +613,7 @@ def handle_alt5():
         overlay.update_log(f"🤖 AI action: {ai_decision['final_decision'].upper()}")
         overlay.update_log(f"💡 Reasoning: {ai_decision['thinking_process']}")
         perform_ai_action(ai_decision)
+        return ai_decision
 
 def rotate_image(image, angle):
     """Rotate the image by a given angle"""
@@ -664,7 +666,7 @@ def reset_game_state():
 def save_game_state():
     """Save current game state with timestamp"""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"screenshots/game_state.json"
+    filename = f"screenshots/game_state_{timestamp}.json"
     
     # Convert defaultdicts to regular dicts
     def convert_to_serializable(obj):
@@ -758,7 +760,7 @@ def is_new_hand_available():
 
 def automation_loop():
     """Main automation control loop"""
-    global ai_folded, round_active, automation_enabled
+    global ai_folded, round_active, automation_enabled, current_phase
     
     while automation_enabled:
         try:
@@ -770,35 +772,52 @@ def automation_loop():
                 ai_folded = False
                 continue
                 
-            if round_active:
-                # Check for AI turn
-                if is_ai_turn():
-                    overlay.update_log("🤖 AI's turn detected")
-                    ai_decision = get_ai_decision()
-                    if ai_decision:
-                        perform_ai_action(ai_decision)
-                        ai_folded = ai_decision["final_decision"].lower() == "fold"
-                        
-                    # Wait for action resolution
-                    time.sleep(2)  
-                    
-                # Check for raises
+            if is_ai_turn():
+                overlay.update_log("🤖 AI's turn detected")
+                ai_decision = None
+                
                 if check_for_raises():
                     overlay.update_log("⚠️ Raise detected, triggering manual update")
-                    handle_alt5()
-                    
-                # Check round end
-                if is_round_end():
-                    overlay.update_log("🎉 Round end detected")
-                    handle_round_end()
-                    round_active = False
-                    time.sleep(10)  # Wait for new hand
-                    
-            time.sleep(1)  # Prevent CPU overload
+                    ai_decision = handle_alt5()
+                elif current_phase == 2 and are_flop_cards_visible():
+                    ai_decision = handle_phase(2)
+                elif current_phase == 3 and is_turn_card_visible():
+                    ai_decision = handle_phase(3)
+                elif current_phase == 4 and is_river_card_visible():
+                    ai_decision = handle_phase(4)
+
+                if ai_decision and isinstance(ai_decision, dict):
+                    ai_folded = ai_decision.get("final_decision", "").lower() == "fold"
+                    time.sleep(2)
+                else:
+                    overlay.update_log("⚠️ No valid AI decision received")
+                    ai_folded = False  
+                         
+            # Check round end
+            if is_round_end():
+                overlay.update_log("🎉 Round end detected")
+                handle_round_end()
+                round_active = False
+                time.sleep(10)
+
+            time.sleep(1)
             
         except Exception as e:
             overlay.update_log(f"Automation error: {str(e)}")
             time.sleep(5)
+
+# New card detection functions
+def are_flop_cards_visible():
+    """Check if all three flop cards are present"""
+    return detect_condition("ai_turn", "ai_turn")
+
+def is_turn_card_visible():
+    """Check if turn card is visible"""
+    return detect_condition("ai_turn", "ai_turn")
+
+def is_river_card_visible():
+    """Check if river card is visible"""
+    return detect_condition("ai_turn", "ai_turn")
 
 def check_for_raises():
     """Check if any player raised"""
