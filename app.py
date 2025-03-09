@@ -398,9 +398,10 @@ def handle_phase(phase):
     elif phase != current_phase:
         overlay.update_log(f"⚠️ Phase jump detected! Current: {current_phase}, Received: {phase}")
         return
-    
+
     formatted_data["game_phase"] = PHASE_CONFIG[phase]["name"]
 
+    update_game_state()
     overlay.update_log(f"\n🎚️ PHASE {phase} TRIGGERED")
     process_phase_data(phase)
     
@@ -408,9 +409,12 @@ def handle_phase(phase):
     if phase == current_phase:
         current_phase += 1 if phase < 4 else 0
         
+    overlay.update_log(f"✅ Phase {phase} completed\n")
+
+
     save_game_state()
     display_current_state()
-    overlay.update_log(f"✅ Phase {phase} completed\n")
+    overlay.update_log("✅ Game state update complete")
 
     # New: Auto-trigger AI analysis
     ai_decision = get_ai_decision()
@@ -421,48 +425,76 @@ def handle_phase(phase):
         return ai_decision
 
 def infer_missing_actions():
-    global formatted_data
-    current_phase = formatted_data.get("phase", 1)
-    expected_actions = PHASE_CONFIG[current_phase]["expected_actions"]
+    global formatted_data, current_phase
     
-    overlay.update_log(f"🔍 Inferring missing actions for {expected_actions} expected actions")
+    if current_phase == 1:
+        return
+
+    previous_phase = current_phase - 1
+    overlay.update_log(f"\n🔍 Inferring Phase {previous_phase} missing actions")
+    
+    # Check for raises in previous phase
+    raise_in_prev = any(
+        any("Raise" in entry.get("action", "") or "Bet" in entry.get("action", "")
+            for entry in player_data["history"]
+            if entry.get("phase") == f"Phase {previous_phase}")
+        for player_data in formatted_data["player_actions"].values()
+    )
+
+    # Infer missing previous phase actions
+    for player in ["Player1", "Player2", "Player3", "Player4", "You"]:
+        player_data = formatted_data["player_actions"].setdefault(
+            player, {"current": "", "history": []}
+        )
+        history = player_data["history"]
+        
+        # Skip folded players
+        if any(entry.get("action") == "Fold" for entry in history):
+            continue
+            
+        # Check if has previous phase action
+        has_prev_action = any(
+            entry.get("phase") == f"Phase {previous_phase}"
+            for entry in history
+        )
+
+        if not has_prev_action:
+            action = "Call" if raise_in_prev else "Check"
+            history.append({
+                "phase": f"Phase {previous_phase}",
+                "action": action,
+                "timestamp": datetime.now().strftime("%H:%M:%S")
+            })
+            overlay.update_log(f"  ⚙️ Inferred {player} Phase {previous_phase}: {action}")
+
+def update_current_action_status():
+    """Update current action status without modifying history"""
+    global formatted_data, current_phase
+    overlay.update_log("\n🔄 Updating current action status")
     
     for player in ["Player1", "Player2", "Player3", "Player4", "You"]:
-        history = formatted_data["player_actions"][player]["history"]
-        current_action = formatted_data["player_actions"][player]["current"]
-
-        # Check if player is folded
-        is_folded = any(entry.get("action") == "Fold" for entry in history)
+        player_data = formatted_data["player_actions"].setdefault(
+            player, {"current": "", "history": []}
+        )
         
-        # Infer missing actions for all expected phases
-        for phase_num in range(1, expected_actions + 1):
-            if len(history) < phase_num:
-                if is_folded:
-                    inferred_action = "Fold"
-                else:
-                    # Get last non-fold action
-                    last_action = next(
-                        (entry["action"] for entry in reversed(history) 
-                         if entry["action"] != "Fold"),
-                        "Check"  # Default to Check if no previous action
-                    )
-                    # Determine inferred action
-                    if "Raise" in last_action or "Bet" in last_action:
-                        inferred_action = "Call"
-                    else:
-                        inferred_action = "Check"
-                
-                new_entry = {
-                    "phase": f"Phase {phase_num}",
-                    "action": inferred_action,
-                    "timestamp": datetime.now().strftime("%H:%M:%S")
-                }
-                history.append(new_entry)
-                overlay.update_log(f"  🤔 Inferred {player} phase {phase_num}: {inferred_action}")
+        # Preserve existing current action if set
+        if player_data["current"]:
+            continue
+            
+        # Check folding status
+        is_folded = any(entry.get("action") == "Fold" for entry in player_data["history"])
+        
+        # Check if has current phase action
+        has_current_action = any(
+            entry.get("phase") == f"Phase {current_phase}"
+            for entry in player_data["history"]
+        )
 
-        # Update current action to last entry
-        if history:
-            formatted_data["player_actions"][player]["current"] = history[-1]["action"]
+        if is_folded:
+            player_data["current"] = "Fold"
+        elif not has_current_action:
+            player_data["current"] = "not played yet"
+            overlay.update_log(f"  ⏳ {player} marked as 'not played yet'")
 
 
 def process_phase_data(phase):
@@ -472,40 +504,6 @@ def process_phase_data(phase):
     config = PHASE_CONFIG[phase]
     overlay.update_log(f"📦 Processing phase configuration...")
     
-    # Single fold check at phase start
-    overlay.update_log("🔍 Checking for folds...")
-    active_players = []
-    for player in ["player1", "player2", "player3", "player4"]:
-        player_key = player.capitalize()
-        fold_key = f"{player}_fold"
-        
-        # Skip already folded players
-        if any(entry.get("action") == "Fold" 
-               for entry in formatted_data["player_actions"].get(player_key, {}).get("history", [])):
-            overlay.update_log(f"  ⏩ {player_key} already folded")
-            continue
-            
-        if fold_key in COORDINATES:
-            fold_image = capture_screenshot(COORDINATES[fold_key], fold_key)
-            if detect_fold(fold_image, player_key):
-                player_actions = formatted_data["player_actions"].get(player_key, {"current": "", "history": []})
-                # Only add fold entry if not already exists
-                if not any(entry.get("action") == "Fold" for entry in player_actions["history"]):
-                    player_actions["history"].append({
-                        "phase": f"Phase {current_phase}",
-                        "action": "Fold",
-                        "timestamp": datetime.now().strftime("%H:%M:%S")
-                    })
-                    player_actions["current"] = "Fold"
-                    formatted_data["player_actions"][player_key] = player_actions
-                    overlay.update_log(f"  🚫 {player_key} marked as folded")
-            else:
-                active_players.append(player_key)
-
-    infer_missing_actions()
-
-    # Rest of processing only for active players
-    overlay.update_log(f"👥 Active players: {', '.join(active_players) or 'None'}")
 
     # Process new cards
     overlay.update_log(f"🖼️ Capturing {len(config['cards'])} card(s)")
@@ -523,23 +521,7 @@ def process_phase_data(phase):
             
             captured_cards.add(card_key)
     
-    # Process interface fields only for active players
-    overlay.update_log(f"📊 Processing {len(config['always_capture'])} interface elements")
-    for field_key in config['always_capture']:
-        if "actions" in field_key:
-            player_from_key = field_key.split("_")[0].capitalize()
-            if player_from_key not in active_players:
-                overlay.update_log(f"  ⏩ Skipping {field_key} - player folded")
-                continue
-        
-        # CAPTURE AND PROCESS FIELD DATA
-        image = capture_screenshot(COORDINATES[field_key], field_key)
-        processed_value = process_interface_field(image, field_key)
-        
-        if field_key == "your_balance":
-            formatted_data["your_balance"] = processed_value
-        elif field_key == "pot":
-            formatted_data["pot"] = processed_value
+
     
     overlay.update_log("✅ Phase processing complete")
 
@@ -549,63 +531,6 @@ def handle_alt5():
     global current_phase
     formatted_data["game_phase"] = f"{PHASE_CONFIG[current_phase]['name']} (Raise)"
     overlay.update_log("\n🔃 MANUAL UPDATE TRIGGERED")
-    
-    # Check for new folds first
-    overlay.update_log("🔍 Checking for folds...")
-    for player in ["player1", "player2", "player3", "player4"]:
-        player_key = player.capitalize()
-        fold_key = f"{player}_fold"
-        
-        # Only check if not already folded
-        if not any(entry.get("action") == "Fold" 
-                 for entry in formatted_data["player_actions"][player_key]["history"]):
-            fold_image = capture_screenshot(COORDINATES[fold_key], fold_key)
-            if detect_fold(fold_image, player_key):
-                formatted_data["player_actions"][player_key]["history"].append({
-                    "phase": "Manual Update",
-                    "action": "Fold",
-                    "timestamp": datetime.now().strftime("%H:%M:%S")
-                })
-                formatted_data["player_actions"][player_key]["current"] = "Fold"
-                overlay.update_log(f"  🚫 {player_key} marked as folded")
-
-    # NEW: Infer actions after manual update
-    infer_missing_actions()
-
-    # Rest of updates... (balance, pot, actions)
-    overlay.update_log("💳 Capturing balance...")
-    balance_image = capture_screenshot(COORDINATES["your_balance"], "your_balance")
-    formatted_data["your_balance"] = process_interface_field(balance_image, "your_balance")
-    
-    overlay.update_log("🏆 Capturing pot...")
-    pot_image = capture_screenshot(COORDINATES["pot"], "pot")
-    formatted_data["pot"] = process_interface_field(pot_image, "pot")
-    
-    overlay.update_log("📝 Capturing player actions...")
-    for player in ["player1", "player2", "player3", "player4"]:
-        player_key = player.capitalize()
-        
-        # Skip folded players
-        if "Fold" in [a.get("action") for a in formatted_data["player_actions"][player_key]["history"]]:
-            continue
-            
-        action_key = f"{player}_actions"
-        action_image = capture_screenshot(COORDINATES[action_key], action_key)
-        processed_value = process_interface_field(action_image, action_key)
-        
-        # Update only if action changed
-        current_action = formatted_data["player_actions"][player_key]["current"]
-        if processed_value and processed_value != current_action:
-            formatted_data["player_actions"][player_key]["current"] = processed_value
-            formatted_data["player_actions"][player_key]["history"].append({
-                "phase": f"Manual Update",
-                "action": processed_value,
-                "timestamp": datetime.now().strftime("%H:%M:%S")
-            })
-    
-    save_game_state()
-    display_current_state()
-    overlay.update_log("✅ Manual update complete")
 
     # New: Auto-trigger AI analysis
     ai_decision = get_ai_decision()
@@ -646,13 +571,12 @@ def reset_game_state():
     formatted_data = {
         "your_hand": [],
         "table_cards": [],
-        "player_actions": {
-            "Player1": {"current": "", "history": []},
-            "Player2": {"current": "", "history": []},
-            "Player3": {"current": "", "history": []},
-            "Player4": {"current": "", "history": []},
-            "You": {"current": "", "history": []}
-        },
+        "player_actions": defaultdict(
+            lambda: {"current": "", "history": []},
+            {
+                "You": {"current": "", "history": []}
+            }
+        ),
         "your_balance": "",
         "pot": "",
         "phase": 1
@@ -666,7 +590,7 @@ def reset_game_state():
 def save_game_state():
     """Save current game state with timestamp"""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"screenshots/game_state_{timestamp}.json"
+    filename = f"screenshots/game_state.json"
     
     # Convert defaultdicts to regular dicts
     def convert_to_serializable(obj):
@@ -723,6 +647,7 @@ def get_ai_decision():
         with open("knowledge/knowledge.txt") as f:
             knowledge = f.read()
         overlay.update_log(f"🤖 AI analyzing game state...")
+        print(formatted_data)
         decision = poker_ai_decision(formatted_data, knowledge)
         
         if "error" in decision:
@@ -776,6 +701,7 @@ def automation_loop():
                 overlay.update_log("🤖 AI's turn detected")
                 ai_decision = None
                 
+
                 if check_for_raises():
                     overlay.update_log("⚠️ Raise detected, triggering manual update")
                     ai_decision = handle_alt5()
@@ -819,8 +745,73 @@ def is_river_card_visible():
     """Check if river card is visible"""
     return detect_condition("ai_turn", "ai_turn")
 
+def update_game_state():
+    global current_phase
+    config = PHASE_CONFIG[current_phase]  # ADD THIS LINE TO GET CURRENT PHASE CONFIG
+    formatted_data["game_phase"] = f"{config['name']}"
+    overlay.update_log("\n🔃 Update game state")
+    active_players = []
+    
+    # Check for new folds first
+    for player in ["player1", "player2", "player3", "player4"]:
+        player_key = player.capitalize()
+        fold_key = f"{player}_fold"
+        
+        # Skip already folded players
+        if any(entry.get("action") == "Fold" 
+               for entry in formatted_data["player_actions"].get(player_key, {}).get("history", [])):
+            overlay.update_log(f"  ⏩ {player_key} already folded")
+            continue
+            
+        if fold_key in COORDINATES:
+            fold_image = capture_screenshot(COORDINATES[fold_key], fold_key)
+            if detect_fold(fold_image, player_key):
+                player_actions = formatted_data["player_actions"].get(player_key, {"current": "", "history": []})
+                # Only add fold entry if not already exists
+                if not any(entry.get("action") == "Fold" for entry in player_actions["history"]):
+                    player_actions["history"].append({
+                        "phase": f"Phase {current_phase}",
+                        "action": "Fold",
+                        "timestamp": datetime.now().strftime("%H:%M:%S")
+                    })
+                    player_actions["current"] = "Fold"
+                    formatted_data["player_actions"][player_key] = player_actions
+                    overlay.update_log(f"  🚫 {player_key} marked as folded")
+            else:
+                active_players.append(player_key)
+
+    infer_missing_actions()  # Handles historical actions
+    
+
+    # Rest of processing only for active players
+    overlay.update_log(f"👥 Active players: {', '.join(active_players) or 'None'}")
+    overlay.update_log(f"📊 Processing {len(config['always_capture'])} interface elements")
+    
+    for field_key in config['always_capture']:
+        if "actions" in field_key:
+            player_from_key = field_key.split("_")[0].capitalize()
+            if player_from_key not in active_players:
+                overlay.update_log(f"  ⏩ Skipping {field_key} - player folded")
+                continue
+        
+        # CAPTURE AND PROCESS FIELD DATA
+        image = capture_screenshot(COORDINATES[field_key], field_key)
+        processed_value = process_interface_field(image, field_key)
+        
+        if field_key == "your_balance":
+            formatted_data["your_balance"] = processed_value
+        elif field_key == "pot":
+            formatted_data["pot"] = processed_value
+
+    update_current_action_status()  # Handles current status
+
 def check_for_raises():
     """Check if any player raised"""
+    update_game_state()
+    save_game_state()
+    display_current_state()
+    overlay.update_log("✅ Game state update complete")
+
     current_phase = formatted_data.get("phase", 1)
     for player in formatted_data["player_actions"].values():
         if any("Raise" in action["action"] or "Bet" in action["action"] 
