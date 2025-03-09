@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.env
+*.log
+data.json
+results.json
+venv/
+env/
+.idea/
+*.mf
+*.gz
+moondream-2b-int
+moondream-2b-int8.mf
+moondream-2b-int8.mf.gz
