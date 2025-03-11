@@ -53,13 +53,19 @@ COORDINATES = {
     "ai_turn": {"top": 866, "left": 192, "width": 151, "height": 51},  # Your action box
     "round_end": {"top": 903, "left": 305, "width": 336, "height": 31},  # Pot area when empty
     "new_hand": {"top": 866, "left": 192, "width": 151, "height": 51},  # First card position
+    "flop_cards": {"top": 544, "left": 261, "width": 91, "height": 17},
+    "turn_card": {"top": 544, "left": 526, "width": 106, "height": 18},
+    "river_card": {"top": 543, "left": 633, "width": 104, "height": 16},
 }
 
 # Add template images paths
 TEMPLATES = {
     "ai_turn": cv2.imread("symbol_templates/your_turn.png", cv2.IMREAD_GRAYSCALE),
     "round_end": cv2.imread("symbol_templates/empty_pot.png", cv2.IMREAD_GRAYSCALE),
-    "new_hand": cv2.imread("symbol_templates/card_back.png", cv2.IMREAD_GRAYSCALE)
+    "new_hand": cv2.imread("symbol_templates/card_back.png", cv2.IMREAD_GRAYSCALE),
+    "flop_cards": cv2.imread("symbol_templates/flop_cards.png", cv2.IMREAD_GRAYSCALE),
+    "turn_card": cv2.imread("symbol_templates/turn_card.png", cv2.IMREAD_GRAYSCALE),
+    "river_card": cv2.imread("symbol_templates/river_card.png", cv2.IMREAD_GRAYSCALE)
 }
 
 # Simplified button coordinates
@@ -700,17 +706,18 @@ def automation_loop():
             if is_ai_turn():
                 overlay.update_log("🤖 AI's turn detected")
                 ai_decision = None
-                
 
-                if check_for_raises():
-                    overlay.update_log("⚠️ Raise detected, triggering manual update")
-                    ai_decision = handle_alt5()
-                elif current_phase == 2 and are_flop_cards_visible():
+                # First check for new phase triggers
+                if current_phase == 2 and are_flop_cards_visible():
                     ai_decision = handle_phase(2)
                 elif current_phase == 3 and is_turn_card_visible():
                     ai_decision = handle_phase(3)
                 elif current_phase == 4 and is_river_card_visible():
                     ai_decision = handle_phase(4)
+                # Then check for raises if no new phase was detected
+                elif check_for_raises():
+                    overlay.update_log("⚠️ Raise detected, triggering manual update")
+                    ai_decision = handle_alt5()
 
                 if ai_decision and isinstance(ai_decision, dict):
                     ai_folded = ai_decision.get("final_decision", "").lower() == "fold"
@@ -735,15 +742,15 @@ def automation_loop():
 # New card detection functions
 def are_flop_cards_visible():
     """Check if all three flop cards are present"""
-    return detect_condition("ai_turn", "ai_turn")
+    return detect_condition("flop_cards", "flop_cards")
 
 def is_turn_card_visible():
     """Check if turn card is visible"""
-    return detect_condition("ai_turn", "ai_turn")
+    return detect_condition("turn_card", "turn_card")
 
 def is_river_card_visible():
     """Check if river card is visible"""
-    return detect_condition("ai_turn", "ai_turn")
+    return detect_condition("river_card", "river_card")
 
 def update_game_state():
     global current_phase
@@ -812,10 +819,9 @@ def check_for_raises():
     display_current_state()
     overlay.update_log("✅ Game state update complete")
 
-    current_phase = formatted_data.get("phase", 1)
     for player in formatted_data["player_actions"].values():
-        if any("Raise" in action["action"] or "Bet" in action["action"] 
-               for action in player["history"] if action["phase"] == f"Phase {current_phase}"):
+        current_action = player.get("current", "")
+        if "Raise" in current_action or "Bet" in current_action:
             return True
     return False
 
